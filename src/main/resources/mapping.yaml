@@ -1,0 +1,29 @@
+globalConfig:
+  sendKey: true
+  recordExistsAction: REPLACE
+mappings:
+- key: actor:(\d+)
+  namespace: test
+  set: Actor
+  id: $1
+  type: INTEGER
+  bins:
+  - name: votes
+    type: INTEGER
+  - name: release_year
+    binName: year
+- key: movie:(\d+)
+  namespace: test
+  set: Movie
+  id: $1
+- key: test.sortedSet
+  namespace: test
+  set: sortedSet
+  id: 1
+- key: (\w+).(\w+).(\w+)
+  namespace: $1
+  set: $2
+  id: $3
+  bins:
+  - binName: data
+
