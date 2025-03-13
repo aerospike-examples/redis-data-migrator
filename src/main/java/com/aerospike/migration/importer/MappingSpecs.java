@@ -16,7 +16,7 @@ public class MappingSpecs {
                 return new RecordTranslator(spec, matcher, redisKey);
             }
         }
-        throw new InvalidConfigurationException("No translator available for key %s, cannot map to Aerospike", redisKey);
+        throw new NoTranslatorException("No translator available for key %s, cannot map to Aerospike", redisKey);
     }
     
     public void validate() {

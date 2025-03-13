@@ -39,6 +39,7 @@ public class AerospikeImporterOptions {
     
     private boolean verbose = false;
     private boolean debug = false;
+    private boolean ignoreMissing = false;
     
     private int maxQueueDepth;
     
@@ -157,7 +158,7 @@ public class AerospikeImporterOptions {
                         "192.168.1.10:cert1:3000,[2001::1111]:cert2:3000\n");
         options.addOption("U", "user", true, "User name for cluster");
         options.addOption("P", "password", true, "Password for cluster");
-        options.addOption("t", "tls", true, "Set the TLS Policy options for the Aerospike cluster. The value passed should be a JSON string. Valid keys in this "
+        options.addOption("ts", "tls", true, "Set the TLS Policy options for the Aerospike cluster. The value passed should be a JSON string. Valid keys in this "
                 + "string inlcude 'protocols', 'ciphers', 'revokeCerts', 'context' and 'loginOnly'. For 'context', the value should be a JSON string which "
                 + "can contain keys 'certChain' (path to the certificate chain PEM), 'privateKey' (path to the certificate private key PEM), "
                 + "'caCertChain' (path to the CA certificate PEM), 'keyPassword' (password used for the certificate chain PEM), 'tlsHost' (the tlsName of the Aerospike host). "
@@ -168,6 +169,7 @@ public class AerospikeImporterOptions {
         options.addOption("V", "verbose", false, "Turn on verbose logging, especially for cluster details and TLS connections");
         options.addOption("D", "debug", false, "Turn on debug mode. This will output a lot of information and automatically turn on verbose mode and turn silent mode off");
         options.addOption("qd", "queueDepth", true, "Specify the maximum queue depth to process from file. (Default: 5000)");
+        options.addOption("im", "ignoreMissing", false, "If a record in Redis has a key which does not match any of the mapping specs, silently ignore this record instead of flagging an error.");
         return options;
     }
 
@@ -265,6 +267,7 @@ public class AerospikeImporterOptions {
 
         this.recordExistsAction = RecordExistsAction.valueOf(cl.getOptionValue("recordExistsAction", "UPDATE"));
         this.sendKey = Boolean.valueOf(cl.getOptionValue("sendKey", "true"));
+        this.ignoreMissing = cl.hasOption("ignoreMissing");
         this.verbose = cl.hasOption("verbose");
         this.debug = cl.hasOption("debug");
         if (this.debug) {
@@ -353,5 +356,9 @@ public class AerospikeImporterOptions {
 
     public int getMaxQueueDepth() {
         return maxQueueDepth;
+    }
+    
+    public boolean isIgnoreMissing() {
+        return ignoreMissing;
     }
 }

@@ -41,6 +41,7 @@ public class AerospikeImporter {
     private volatile boolean done = false;
     private final AtomicLong success = new AtomicLong(0);
     private final AtomicLong failed = new AtomicLong(0);
+    private final AtomicLong ignored = new AtomicLong(0);
     private final AtomicInteger activeThreads = new AtomicInteger(0);
     private final ExecutorService executor;
     
@@ -130,6 +131,14 @@ public class AerospikeImporter {
                             }
                             success.incrementAndGet();
                         } catch (InterruptedException ignored) {
+                        } catch (NoTranslatorException nte) {
+                            if (this.options.isIgnoreMissing()) {
+                                ignored.incrementAndGet();
+                            }
+                            else {
+                                failed.incrementAndGet();
+                                logError(nte);
+                            }
                         } catch (Exception ex) {
                             failed.incrementAndGet();
                             logError(ex);
@@ -241,7 +250,7 @@ public class AerospikeImporter {
                     System.out.println();
                     System.out.println("------------");
                 }
-                throw new UnsupportedEncodingException(String.format("Ignoring unsupported type: %s. Key %s\n", key, kvp.getValueType()));
+                throw new UnsupportedEncodingException(String.format("Ignoring unsupported type: %s. Key %s", key, kvp.getValueType()));
             }
             break;
         }
@@ -258,7 +267,7 @@ public class AerospikeImporter {
     
     private void monitorProgress() throws InterruptedException {
         if (!options.isSilent()) {
-            System.out.println("Import started from file: " + options.getInputFileName());
+            System.out.printf("Import started from file: %s using %d threads.\n", options.getInputFileName(), this.threadsToUse);
         }
         long startTime = System.currentTimeMillis();
         long lastTotalCount = 0;
@@ -267,13 +276,14 @@ public class AerospikeImporter {
             Thread.sleep(1000);
             long success = this.success.get();
             long failure = this.failed.get();
-            long recordsThisSecond = success + failure - lastTotalCount;
-            totalCurrentRecords = success + failure;
+            long ignored = this.ignored.get();
+            long recordsThisSecond = success + failure + ignored - lastTotalCount;
+            totalCurrentRecords = success + failure + ignored;
             long now = System.currentTimeMillis();
             long elapsedMilliseconds = now - startTime;
             if (!options.isSilent()) {
-                System.out.printf("%,dms: active threads: %d, queue %,d, records processed: %,d (%,d/%,d), throughput: {last second: %,d rps, overall: %,d rps}\n", 
-                        elapsedMilliseconds, this.activeThreads.get(), this.queue.size(), totalCurrentRecords, success, failure,
+                System.out.printf("%,dms: active threads: %d, queue %,d, records processed: %,d (%,d/%,d/%,d), throughput: {last second: %,d rps, overall: %,d rps}\n", 
+                        elapsedMilliseconds, this.activeThreads.get(), this.queue.size(), totalCurrentRecords, success, ignored, failure,
                         recordsThisSecond, (totalCurrentRecords)*1000/elapsedMilliseconds);
             }
             lastTotalCount = totalCurrentRecords;
@@ -304,11 +314,7 @@ public class AerospikeImporter {
     
     public static void main(String[] args) throws Exception {
         AerospikeImporterOptions options = new AerospikeImporterOptions(args);
-//        File mapping = new File("/Users/tfaulkes/Programming/eclipseWorkspace/RedisMigrationGuide/src/main/resources/mapping.yaml");
         AerospikeImporter importer = new AerospikeImporter(options);
         importer.run();
-        
-//        File f = new File("/Users/tfaulkes/dump.rdb");
-//        importer.printRdbFile(f);
     }
 }

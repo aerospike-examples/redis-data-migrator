@@ -29,7 +29,7 @@ public class MappingSpec {
     
     public Matcher matches(String key) {
         Matcher matcher = this.pattern.matcher(key);
-        if (matcher.find()) {
+        if (matcher.matches()) {
             return matcher;
         }
         return null;
