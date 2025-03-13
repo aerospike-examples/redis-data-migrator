@@ -274,6 +274,9 @@ public class AerospikeImporterOptions {
             this.silent = false;
             this.verbose = true;
         }
+        if (silent) {
+            this.verbose = false;
+        }
         this.maxQueueDepth = Integer.valueOf(cl.getOptionValue("queueDepth", "5000"));
         this.validate(options, cl);
     }

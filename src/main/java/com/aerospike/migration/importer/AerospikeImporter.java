@@ -1,11 +1,11 @@
 package com.aerospike.migration.importer;
 
-import java.awt.Desktop.Action;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -21,6 +21,7 @@ import com.aerospike.client.Host;
 import com.aerospike.client.IAerospikeClient;
 import com.aerospike.client.policy.ClientPolicy;
 import com.aerospike.client.policy.WritePolicy;
+import com.aerospike.migration.importer.BinSpec.Type;
 
 import net.whitbeck.rdbparser.Entry;
 import net.whitbeck.rdbparser.Eof;
@@ -35,7 +36,6 @@ public class AerospikeImporter {
     private final AerospikeImporterOptions options;
     private final int threadsToUse;
     private Thread producer;
-    private Thread monitor;
     private File errorFile = null;
     private PrintWriter errorWriter = null;
     private volatile boolean done = false;
@@ -127,9 +127,11 @@ public class AerospikeImporter {
                         try {
                             Entry item = queue.poll(1, TimeUnit.SECONDS);
                             if (item != null) {
-                                processRecord(item);
+                                if (processRecord(item)) {
+                                    success.incrementAndGet();
+                                }
+                                // Otherwise it's a non-record in the file, just ignore it.
                             }
-                            success.incrementAndGet();
                         } catch (InterruptedException ignored) {
                         } catch (NoTranslatorException nte) {
                             if (this.options.isIgnoreMissing()) {
@@ -153,7 +155,13 @@ public class AerospikeImporter {
         executor.shutdown();
     }
     
-    private void processRecord(Entry e) throws Exception {
+    /**
+     * Process a single entry from the database.
+     * @param e - the entry to process
+     * @return true if a record has been processed and inserted into the database, false otherwise
+     * @throws Exception
+     */
+    private boolean processRecord(Entry e) throws Exception {
         switch (e.getType()) {
 
         case SELECT_DB:
@@ -202,7 +210,7 @@ public class AerospikeImporter {
                     if (options.isVerbose()) {
                         System.out.println("   Expired!");
                     }
-                    return;
+                    return false;
                 }
             }
             if (options.isVerbose()) {
@@ -214,6 +222,9 @@ public class AerospikeImporter {
             case HASHMAP_AS_LISTPACK_EX:
             case HASHMAP_AS_LISTPACK_EX_PRE_GA:
             case HASHMAP_AS_ZIPLIST:
+            case HASHMAP_WITH_METADATA:
+            case HASHMAP_WITH_METADATA_PRE_GA:
+            case ZIPMAP:
                 List<byte[]> values = kvp.getValues();
                 
                 int length = values.size();
@@ -232,13 +243,28 @@ public class AerospikeImporter {
                     System.out.println("------------");
                 }
                 client.put(wp, translator.getKey(), bins);
-                break;
+                return true;
                 
             case VALUE:
                 String value = new String(kvp.getValues().get(0), "ASCII");
                 Bin bin = translator.getBin(null, value);
                 client.put(wp, translator.getKey(), bin);
-                break;
+                return true;
+                
+            case QUICKLIST:
+            case QUICKLIST2:
+            case LISTPACK:
+            case ZIPLIST:
+            case LIST:
+                List<Object> thisValueList = new ArrayList<>();
+                Type type = translator.getBinType(null);
+                for (byte[] val : kvp.getValues()) {
+                    String thisValue = new String(val, "ASCII");
+                    thisValueList.add(translator.convertToType(thisValue, type));
+                }
+                Bin listBin = new Bin(translator.getBinName(null), thisValueList);
+                client.put(wp, translator.getKey(), listBin);
+                return true;
                 
             default:
                 if (options.isVerbose()) {
@@ -252,8 +278,8 @@ public class AerospikeImporter {
                 }
                 throw new UnsupportedEncodingException(String.format("Ignoring unsupported type: %s. Key %s", key, kvp.getValueType()));
             }
-            break;
         }
+        return false;
     }
 
     private void parseRdbFile(File file) throws Exception {
@@ -290,10 +316,12 @@ public class AerospikeImporter {
         }
         this.executor.awaitTermination(7, TimeUnit.DAYS);
         
-        System.out.printf("\nExecution completed in %,dms. %,d records imported successfully, %,d records failed.",
-                (System.currentTimeMillis()-startTime), success.get(), failed.get());
-        if (this.errorFile != null && failed.get() > 0) {
-            System.out.printf("Errors appear in %s\n", errorFile.getAbsolutePath());
+        if (!options.isSilent()) {
+            System.out.printf("\nExecution completed in %,dms. %,d records imported successfully, %,d records failed.\n",
+                    (System.currentTimeMillis()-startTime), success.get(), failed.get());
+            if (this.errorFile != null && failed.get() > 0) {
+                System.out.printf("Errors appear in %s\n", errorFile.getAbsolutePath());
+            }
         }
     }
     
@@ -308,8 +336,9 @@ public class AerospikeImporter {
         try {
             this.monitorProgress();
         } catch (InterruptedException ignored) {
+        } finally {
+            this.shutdown();
         }
-        this.shutdown();
     }
     
     public static void main(String[] args) throws Exception {
