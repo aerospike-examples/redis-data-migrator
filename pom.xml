@@ -15,6 +15,7 @@
 		<lettuce-version>6.3.2.RELEASE</lettuce-version>
 		<rdb-parser.version>2.2.0</rdb-parser.version>
 		<ssl-context.version>8.1.1</ssl-context.version>
+		<junit-version>5.12.1</junit-version>
 		
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -63,6 +64,13 @@
 		    <groupId>io.github.hakky54</groupId>
 		    <artifactId>sslcontext-kickstart-for-pem</artifactId>
 		    <version>${ssl-context.version}</version>
+		</dependency>
+		<!-- https://mvnrepository.com/artifact/org.junit.jupiter/junit-jupiter-api -->
+		<dependency>
+		    <groupId>org.junit.jupiter</groupId>
+		    <artifactId>junit-jupiter-api</artifactId>
+		    <version>${junit-version}</version>
+		    <scope>test</scope>
 		</dependency>
 	</dependencies>
 	<build>

@@ -19,9 +19,10 @@ import com.aerospike.client.AerospikeClient;
 import com.aerospike.client.Bin;
 import com.aerospike.client.Host;
 import com.aerospike.client.IAerospikeClient;
+import com.aerospike.client.Operation;
 import com.aerospike.client.policy.ClientPolicy;
 import com.aerospike.client.policy.WritePolicy;
-import com.aerospike.migration.importer.BinSpec.Type;
+import com.aerospike.migration.importer.TranslateSpec.Type;
 
 import net.whitbeck.rdbparser.Entry;
 import net.whitbeck.rdbparser.Eof;
@@ -185,7 +186,7 @@ public class AerospikeImporter {
         case KEY_VALUE_PAIR:
             KeyValuePair kvp = (KeyValuePair)e;
             String key = new String(kvp.getKey(), "ASCII");
-            RecordTranslator translator = specs.getTranslatorFromString(key);
+            RecordTranslator translator = specs.getTranslatorFromString(key, options.isDebug());
 
             if (options.isVerbose()) {
                 System.out.println("Key value pair");
@@ -213,6 +214,12 @@ public class AerospikeImporter {
                     return false;
                 }
             }
+            if (translator.sendKey() != null) {
+                if (wp == null) {
+                    wp = client.copyWritePolicyDefault();
+                }
+                wp.sendKey = translator.sendKey();
+            }
             if (options.isVerbose()) {
                 System.out.println("Value type: " + kvp.getValueType());
             }
@@ -228,11 +235,11 @@ public class AerospikeImporter {
                 List<byte[]> values = kvp.getValues();
                 
                 int length = values.size();
-                Bin[] bins = new Bin[length/2];
+                List<Operation> ops = new ArrayList<>();
                 for (int i = 0; i < length; i+= 2) {
                     String binName = new String(values.get(i), "ASCII");
                     String binValue = new String(values.get(i+1), "ASCII");
-                    bins[i/2] = translator.getBin(binName, binValue);
+                    ops.addAll(translator.getOperationsFor(binName, binValue));
                 }
                 if (options.isVerbose()) {
                     System.out.print("Values: ");
@@ -242,14 +249,19 @@ public class AerospikeImporter {
                     System.out.println();
                     System.out.println("------------");
                 }
-                client.put(wp, translator.getKey(), bins);
+                client.operate(wp, translator.getKey(), ops.toArray(new Operation[0]));
                 return true;
                 
             case VALUE:
                 String value = new String(kvp.getValues().get(0), "ASCII");
-                Bin bin = translator.getBin(null, value);
-                client.put(wp, translator.getKey(), bin);
+                List<Operation> op = translator.getOperationsFor(null, value);
+                client.operate(wp, translator.getKey(), op.toArray(new Operation[0]));
                 return true;
+                
+                // For now, add sets in as lists
+            case SET:
+            case INTSET:
+            case SET_AS_LISTPACK:
                 
             case QUICKLIST:
             case QUICKLIST2:
@@ -257,13 +269,14 @@ public class AerospikeImporter {
             case ZIPLIST:
             case LIST:
                 List<Object> thisValueList = new ArrayList<>();
-                Type type = translator.getBinType(null);
-                for (byte[] val : kvp.getValues()) {
-                    String thisValue = new String(val, "ASCII");
-                    thisValueList.add(translator.convertToType(thisValue, type));
-                }
-                Bin listBin = new Bin(translator.getBinName(null), thisValueList);
-                client.put(wp, translator.getKey(), listBin);
+                // TODO
+//                Type type = translator.getBinType(null);
+//                for (byte[] val : kvp.getValues()) {
+//                    String thisValue = new String(val, "ASCII");
+//                    thisValueList.add(translator.convertToType(thisValue, type));
+//                }
+//                Bin listBin = new Bin(translator.getBinName(null), thisValueList);
+//                client.put(wp, translator.getKey(), listBin);
                 return true;
                 
             default:
