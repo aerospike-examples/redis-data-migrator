@@ -47,6 +47,8 @@ public class TestRecordTranslator {
         mappingSpec.setId("$1");
         mappingSpec.getTranslate().add(new TranslateSpec("**.age", null, Type.INTEGER));
         mappingSpec.getTranslate().add(new TranslateSpec("$.firstName", "fname", null));
+        mappingSpec.getTranslate().add(new TranslateSpec("**.heightInCm", "hInCm", Type.INTEGER));
+        mappingSpec.getTranslate().add(new TranslateSpec("**.weight", null, Type.DOUBLE));
         specList.add(mappingSpec);
         
         mappingSpec = new MappingSpec();
@@ -83,7 +85,7 @@ public class TestRecordTranslator {
         
         // Add a KV map of bins
         translator = specs.getTranslatorFromString("customer:1234", true);
-        value.addAll( translator.getOperationsFor(Map.of("heightInCm", "203", "weight", "105.25")));
+        value.addAll( translator.getOperationsFor(Map.of("heightInCm", "203", "weight", "105.25", "language", "English")));
 
         // Add in a child
         key = "customer:1234:children:0:firstName";
@@ -101,10 +103,10 @@ public class TestRecordTranslator {
         System.out.println("Ops for age:28");
         value.addAll( translator.getOperationsFor("age", "28") );
         
-//        key = "customer:1234:cars:1";
-//        translator = specs.getTranslatorFromString(key, true);
-//        System.out.println("Ops for {make:Mitsubishi, model:Lancer, age:17}");
-//        value.addAll( translator.getOperationsFor(Map.of("make", "Mitusbishi", "model", "Lancer", "age", "17")));
+        key = "customer:1234:cars:1";
+        translator = specs.getTranslatorFromString(key, true);
+        System.out.println("Ops for {make:Mitsubishi, model:Lancer, age:17}");
+        value.addAll( translator.getOperationsFor(Map.of("make", "Mitusbishi", "model", "Lancer", "age", "17")));
         
         try (IAerospikeClient client = new AerospikeClient("localhost", 3100)) {
             Key asKey = translator.getKey();
@@ -120,6 +122,12 @@ public class TestRecordTranslator {
             assertNotNull(map);
             assertEquals(map.get("line1"), "123 Main St");
             assertEquals(map.get("suburb"), "Denver");
+            
+            assertEquals(37, rec.getInt("age"));
+            assertEquals(203, rec.getInt("hInCm"));
+            assertEquals("English", rec.getString("language"));
+            assertEquals("Tim", rec.getString("fname"));
+            assertEquals(105.25, rec.getDouble("weight"), 0.00001);
         }
     }
 }

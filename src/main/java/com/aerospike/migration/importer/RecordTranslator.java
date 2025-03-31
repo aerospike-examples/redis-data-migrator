@@ -3,6 +3,7 @@ package com.aerospike.migration.importer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -110,7 +111,10 @@ public class RecordTranslator {
 //    }
 
     private void validatePath(List<Object> path) {
-        if (path.size() == 0) {
+        if (path == null) {
+            throw new InvalidConfigurationException("path is null");
+        }
+        else if (path.size() == 0) { 
             throw new InvalidConfigurationException("path parsed to an empty list");
         }
         else if (!(path.get(0) instanceof String)) {
@@ -143,14 +147,18 @@ public class RecordTranslator {
         }
     }
     
-    private Value applyTranslateSpecToValue(TranslateSpec spec, String value) {
+    private Object applyTranslateSpecToValueAsObject(TranslateSpec spec, String value) {
         String translatedValue = matcher.replaceAll(value);
         if (spec == null) {
-            return Value.get(translatedValue);
+            return translatedValue;
         }
         else {
-            return Value.get(convertToType(translatedValue, spec.getType()));
+            return convertToType(translatedValue, spec.getType());
         }
+    }
+    
+    private Value applyTranslateSpecToValue(TranslateSpec spec, String value) {
+        return Value.get(applyTranslateSpecToValueAsObject(spec, value));
     }
     
     private Object applyTranslateSpecToPathItem(TranslateSpec spec, Object pathItem) {
@@ -166,7 +174,7 @@ public class RecordTranslator {
         }
     }
     
-    public void putIntoBin(Deque<Object> currentPath, String key, String value, List<Operation> ops) {
+    private void putIntoBin(Deque<Object> currentPath, String key, String value, List<Operation> ops) {
         currentPath.push(key);
         TranslateSpec spec = this.mappingSpec.findMatchingSpec(currentPath);
         Value valueToUse = applyTranslateSpecToValue(spec, value);
@@ -178,6 +186,110 @@ public class RecordTranslator {
         currentPath.pop();
     }
     
+    private List<Object> translateList(List<String> values, Deque<Object> currentPath) {
+        List<Object> newList = new ArrayList<>();
+        for (int i = 0; i < values.size(); i++) {
+            String thisValue = values.get(i);
+            currentPath.push((long)i);
+            TranslateSpec listSpec = this.mappingSpec.findMatchingSpec(currentPath);
+            newList.add(applyTranslateSpecToValueAsObject(listSpec, thisValue));
+            currentPath.pop();
+        }
+        return newList;
+    }
+    
+    public List<Operation> getOperationsFor(List<String> values) {
+        if (debug) {
+            System.out.printf("Getting operations for list: %s on key '%s'\n"
+                    + " - Mapping spec: %s\n",
+                    values, this.redisKey, this.mappingSpec);
+        }
+        Deque<Object> currentPath = new ArrayDeque<>();
+        List<Operation> ops = new ArrayList<>();
+        
+        String pathToUse = this.mappingSpec.getPath();
+
+        if (pathToUse == null) {
+            throw new InvalidConfigurationException("List operation on key %s did not contain a path, so I have no idea where to put the data", this.redisKey);
+        }
+        else {
+            PathParser parser = new PathParser(getTranslatedPath(pathToUse), false);
+            List<Object> path = parser.parsePath();
+            validatePath(path);
+            currentPath.push(path.get(0));
+            
+            if (path.size() == 1) {
+                TranslateSpec spec = this.mappingSpec.findMatchingSpec(currentPath);
+                String binName = (String)applyTranslateSpecToPathItem(spec, path.get(0));
+                List<Object> newList = translateList(values, currentPath);
+                if (debug) {
+                    System.out.printf(" - Put '%s' into bin %s\n", newList, binName);
+                }
+                ops.add(Operation.put(new Bin(binName, newList)));
+                currentPath.pop();
+            }
+
+            else {
+                TranslateSpec spec = this.mappingSpec.findMatchingSpec(currentPath);
+                String binName = (String)applyTranslateSpecToPathItem(spec, (String)path.get(0));
+                
+                List<String> ctxStrings = new ArrayList<>();
+                List<CTX> ctxs = new ArrayList<>();
+                for (int i = 1; i < path.size(); i++) {
+                    Object thisItem = path.get(i);
+                    currentPath.push(thisItem);
+                    spec = this.mappingSpec.findMatchingSpec(currentPath);
+                    thisItem = applyTranslateSpecToPathItem(spec, thisItem);
+    
+                    if (thisItem instanceof String) {
+                        if (debug) {
+                            System.out.printf(" - Create map in bin %s with context %s\n", binName, ctxStrings);
+                        }
+                        ops.add(MapOperation.create(binName, MapOrder.KEY_ORDERED, ctxs.size() > 0 ? ctxs.toArray(CTX_TYPE) : null));
+                        if (i < path.size() - 1) {
+                            ctxs.add(CTX.mapKey(Value.get(thisItem)));
+                            if (debug) {
+                                ctxStrings.add(String.format("mapKey(Value.get(\"%s\"))", thisItem));
+                            }
+                        }
+                    }
+                    else {
+                        long index = (long)thisItem;
+                        if (debug) {
+                            System.out.printf(" - Create list in bin %s with context %s\n", binName, ctxStrings);
+                        }
+                        ops.add(ListOperation.create(binName, ListOrder.UNORDERED, true, ctxs.size() > 0 ? ctxs.toArray(CTX_TYPE) : null));
+                        if (i < path.size() - 1) {
+                            ctxs.add(CTX.listIndex((int)index));
+                            if (debug) {
+                                ctxStrings.add(String.format("listIndex(%d)", index));
+                            }
+                        }
+                    }
+                }
+                
+                Object lastOp = path.get(path.size() - 1);
+                // Translate the items in the list as needed.
+                List<Object> newList = translateList(values, currentPath);
+                if (lastOp instanceof String) {
+                    MapPolicy mapPolicy = new MapPolicy(MapOrder.KEY_ORDERED, MapWriteFlags.DEFAULT);
+                    if (debug) {
+                        System.out.printf(" - MapOperation.put(%s, %s, %s, %s)\n", binName, lastOp, newList, ctxStrings);
+                    }
+                    ops.add(MapOperation.put(mapPolicy, binName, Value.get(lastOp), Value.get(newList), ctxs.size() > 0 ? ctxs.toArray(CTX_TYPE) : null));
+                }
+                else {
+                    if (debug) {
+                        System.out.printf(" - ListOperation.set(%s, %s, %s, %s)\n", binName, lastOp, newList, ctxStrings);
+                    }
+                    ListPolicy listPolicy = new ListPolicy(ListOrder.UNORDERED, ListWriteFlags.DEFAULT);
+                    ops.add(ListOperation.set(listPolicy, binName, (int)(long)lastOp, Value.get(newList), ctxs.size() > 0 ? ctxs.toArray(CTX_TYPE) : null));
+                }
+            }
+        }
+        return ops;
+    }
+
     public List<Operation> getOperationsFor(Map<String, String> namesAndValues) {
         if (debug) {
             System.out.printf("Getting operations for map: %s on key '%s'\n"
@@ -189,32 +301,30 @@ public class RecordTranslator {
         List<Operation> ops = new ArrayList<>();
         
         String pathToUse = this.mappingSpec.getPath();
+
         if (pathToUse == null) {
             // Need to turn the maps into a sequence of bin
             for (String thisName : namesAndValues.keySet()) {
                 putIntoBin(currentPath, thisName, namesAndValues.get(thisName), ops);
-//                currentPath.push(thisName);
-//                TranslateSpec spec = this.mappingSpec.findMatchingSpec(currentPath);
-//                Value valueToUse = applyTranslateSpecToValue(spec, namesAndValues.get(thisName));
-//                String binName = (String)applyTranslateSpecToPathItem(spec, thisName);
-//                if (debug) {
-//                    System.out.printf(" - Put '%s' into bin %s\n", valueToUse, binName);
-//                }
-//                ops.add(Operation.put(new Bin(binName, valueToUse)));
-//                currentPath.pop();
             }
         }
         else {
             PathParser parser = new PathParser(getTranslatedPath(pathToUse), false);
             List<Object> path = parser.parsePath();
             validatePath(path);
-            binName = (String)path.get(0);
+            currentPath.push(path.get(0));
+
+            TranslateSpec spec = this.mappingSpec.findMatchingSpec(currentPath);
+            String binName = (String)applyTranslateSpecToPathItem(spec, (String)path.get(0));
+            
             List<String> ctxStrings = new ArrayList<>();
             List<CTX> ctxs = new ArrayList<>();
-            // Path [0] is the bin name, so there's no context associated with this
             for (int i = 1; i < path.size(); i++) {
                 Object thisItem = path.get(i);
-                
+                currentPath.push(thisItem);
+                spec = this.mappingSpec.findMatchingSpec(currentPath);
+                thisItem = applyTranslateSpecToPathItem(spec, thisItem);
+
                 if (thisItem instanceof String) {
                     if (debug) {
                         System.out.printf(" - Create map in bin %s with context %s\n", binName, ctxStrings);
@@ -243,19 +353,28 @@ public class RecordTranslator {
             }
             
             Object lastOp = path.get(path.size() - 1);
+            // Translate the items in the map as needed.
+            Map<String, Object> newMap = new HashMap<>();
+            for (String mapKey : namesAndValues.keySet()) {
+                Object mapValue = namesAndValues.get(mapKey);
+                currentPath.push(mapKey);
+                TranslateSpec mapSpec = this.mappingSpec.findMatchingSpec(currentPath);
+                Object valueToUse = (mapValue instanceof String) ? applyTranslateSpecToValueAsObject(mapSpec, (String)mapValue) : mapValue;
+                newMap.put((String)applyTranslateSpecToPathItem(mapSpec, mapKey), valueToUse);
+            }
             if (lastOp instanceof String) {
                 MapPolicy mapPolicy = new MapPolicy(MapOrder.KEY_ORDERED, MapWriteFlags.DEFAULT);
                 if (debug) {
-                    System.out.printf(" - MapOperation.put(%s, %s, %s, %s)\n", binName, lastOp, namesAndValues, ctxStrings);
+                    System.out.printf(" - MapOperation.put(%s, %s, %s, %s)\n", binName, lastOp, newMap, ctxStrings);
                 }
-                ops.add(MapOperation.put(mapPolicy, binName, Value.get(lastOp), Value.get(namesAndValues), ctxs.size() > 0 ? ctxs.toArray(CTX_TYPE) : null));
+                ops.add(MapOperation.put(mapPolicy, binName, Value.get(lastOp), Value.get(newMap), ctxs.size() > 0 ? ctxs.toArray(CTX_TYPE) : null));
             }
             else {
                 if (debug) {
-                    System.out.printf(" - ListOperation.set(%s, %s, %s, %s)\n", binName, lastOp, namesAndValues, ctxStrings);
+                    System.out.printf(" - ListOperation.set(%s, %s, %s, %s)\n", binName, lastOp, newMap, ctxStrings);
                 }
                 ListPolicy listPolicy = new ListPolicy(ListOrder.UNORDERED, ListWriteFlags.DEFAULT);
-                ops.add(ListOperation.set(listPolicy, binName, (int)(long)lastOp, Value.get(namesAndValues), ctxs.size() > 0 ? ctxs.toArray(CTX_TYPE) : null));
+                ops.add(ListOperation.set(listPolicy, binName, (int)(long)lastOp, Value.get(newMap), ctxs.size() > 0 ? ctxs.toArray(CTX_TYPE) : null));
             }
         }
         return ops;
@@ -268,9 +387,8 @@ public class RecordTranslator {
                     fieldName, value, this.redisKey, this.mappingSpec);
         }
         Deque<Object> currentPath = new ArrayDeque<>();
-        String key = this.redisKey;
         if (value == null) {
-            throw new InvalidConfigurationException("Key %s: Value cannot be null for '%s'", redisKey, key);
+            throw new InvalidConfigurationException("Key %s: Value cannot be null", redisKey);
         }
         List<Operation> ops = new ArrayList<>();
         
@@ -290,15 +408,6 @@ public class RecordTranslator {
         validatePath(path);
         if (path.size() == 1) {
             putIntoBin(currentPath, (String)path.get(0), value, ops);
-//            currentPath.push(path.get(0));
-//            TranslateSpec spec = this.mappingSpec.findMatchingSpec(currentPath);
-//            Value valueToUse = applyTranslateSpecToValue(spec, value);
-//            String binName = (String)applyTranslateSpecToPathItem(spec, path.get(0));
-//            if (debug) {
-//                System.out.printf(" - Put '%s' into bin %s\n", valueToUse, binName);
-//            }
-//            ops.add(Operation.put(new Bin(binName, valueToUse)));
-//            currentPath.pop();
         }
         else {
             currentPath.push((String)path.get(0));

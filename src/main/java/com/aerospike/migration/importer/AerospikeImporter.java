@@ -7,7 +7,9 @@ import java.io.PrintWriter;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -22,7 +24,6 @@ import com.aerospike.client.IAerospikeClient;
 import com.aerospike.client.Operation;
 import com.aerospike.client.policy.ClientPolicy;
 import com.aerospike.client.policy.WritePolicy;
-import com.aerospike.migration.importer.TranslateSpec.Type;
 
 import net.whitbeck.rdbparser.Entry;
 import net.whitbeck.rdbparser.Eof;
@@ -235,12 +236,13 @@ public class AerospikeImporter {
                 List<byte[]> values = kvp.getValues();
                 
                 int length = values.size();
-                List<Operation> ops = new ArrayList<>();
+                Map<String, String> map = new HashMap<>();
                 for (int i = 0; i < length; i+= 2) {
                     String binName = new String(values.get(i), "ASCII");
                     String binValue = new String(values.get(i+1), "ASCII");
-                    ops.addAll(translator.getOperationsFor(binName, binValue));
+                    map.put(binName, binValue);
                 }
+                List<Operation> ops = translator.getOperationsFor(map);
                 if (options.isVerbose()) {
                     System.out.print("Values: ");
                     for (byte[] val : values) {
@@ -268,15 +270,13 @@ public class AerospikeImporter {
             case LISTPACK:
             case ZIPLIST:
             case LIST:
-                List<Object> thisValueList = new ArrayList<>();
-                // TODO
-//                Type type = translator.getBinType(null);
-//                for (byte[] val : kvp.getValues()) {
-//                    String thisValue = new String(val, "ASCII");
-//                    thisValueList.add(translator.convertToType(thisValue, type));
-//                }
-//                Bin listBin = new Bin(translator.getBinName(null), thisValueList);
-//                client.put(wp, translator.getKey(), listBin);
+                List<String> thisValueList = new ArrayList<>();
+                for (byte[] val : kvp.getValues()) {
+                    String thisValue = new String(val, "ASCII");
+                    thisValueList.add(thisValue);
+                }
+                List<Operation> listOps = translator.getOperationsFor(thisValueList);
+                client.operate(wp, translator.getKey(), listOps.toArray(new Operation[0]));
                 return true;
                 
             default:
