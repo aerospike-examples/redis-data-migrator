@@ -187,6 +187,9 @@ public class AerospikeImporter {
         case KEY_VALUE_PAIR:
             KeyValuePair kvp = (KeyValuePair)e;
             String key = new String(kvp.getKey(), "ASCII");
+            
+            // Strip out the hash key from the key if present
+            key = key.replaceAll("[{}]", "");
             RecordTranslator translator = specs.getTranslatorFromString(key, options.isDebug());
 
             if (options.isVerbose()) {
