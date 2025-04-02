@@ -3,8 +3,8 @@
   <groupId>com.aerospike.migration</groupId>
   <artifactId>redis-data-migrator</artifactId>
   <version>0.9</version>
-  <name>Cluster Comparator</name>
-  <description>Find differences between different Aerospike clusters.</description>
+  <name>Redis Data Migrator</name>
+  <description>Import data from Redis to Aerospike.</description>
   
 	<properties>
 		<aerospike-client.verion>9.0.4</aerospike-client.verion>

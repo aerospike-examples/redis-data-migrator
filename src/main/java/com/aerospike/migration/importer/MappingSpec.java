@@ -11,7 +11,6 @@ import lombok.Data;
 @Data
 public class MappingSpec {
     public enum KeyType {STRING, BLOB, INTEGER};
-    private final String NULL_STR = "__null__";
     private String key;
     private String namespace;
     private String set;
@@ -38,27 +37,6 @@ public class MappingSpec {
         }
         return null;
     }
-    
-//    public void validate() {
-//        for (TranslateSpec thisBinSpec : bins) {
-//            String binName = thisBinSpec.getName();
-//            if (binName == null) {
-//                binName = NULL_STR;
-//            }
-//            TranslateSpec existingSpec = binMap.get(binName);
-//            if (existingSpec != null) {
-//                throw new InvalidConfigurationException("Key %s: Bin spec for bin %s is duplicated", key, binName);
-//            }
-//        }
-//    }
-    
-    
-//    public TranslateSpec getSpecForBin(String name) {
-//        if (name == null) {
-//            name = NULL_STR;
-//        }
-//        return this.binMap.get(name);
-//    }
     
     public TranslateSpec findMatchingSpec(Deque<Object> currentPath) {
         for (int i = 0; i < translate.size(); i++) {
